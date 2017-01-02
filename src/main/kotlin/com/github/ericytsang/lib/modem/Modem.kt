@@ -45,13 +45,9 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         return connection
     }
 
-    fun awaitClose()
-    {
-        accepter.join()
-    }
-
     override fun close()
     {
+        // todo: communicate to remote modem that this modem is closing
         multiplexedConnection.close()
         accepter.join()
     }
