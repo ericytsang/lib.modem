@@ -176,6 +176,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         fun send(message:Message) = multiplexedConnectionAccess.withLock()
         {
             multiplexedOs.writeObject(message)
+            multiplexedOs.flush()
         }
     }
 
