@@ -221,13 +221,13 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             private var closeCalled = false
             override fun doClose() = synchronized(connectionsByLocalPort)
             {
+                doNothing()
                 if (!closeCalled)
                 {
                     closeCalled = true
                     if (!remoteOutputStreamIsClosed)
                     {
                         send(Message.RequestEof(remotePort))
-                        doNothing()
                     }
                 }
             }
@@ -255,11 +255,11 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             private var closeCalled = false
             override fun doClose() = synchronized(this)
             {
+                setClosed()
                 if (!closeCalled)
                 {
                     closeCalled = true
                     send(Message.Eof(remotePort))
-                    setClosed()
                 }
             }
             override fun doWrite(b:ByteArray,off:Int,len:Int)
