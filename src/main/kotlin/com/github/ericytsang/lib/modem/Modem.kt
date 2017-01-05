@@ -120,6 +120,10 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:EOFException)
             {
+                connectionsByLocalPort.values.forEach {
+                    it.inputStreamOutputStream.flush()
+                    it.inputStreamOutputStream.close()
+                }
                 break
             }
             synchronized(connectionsByLocalPort)
