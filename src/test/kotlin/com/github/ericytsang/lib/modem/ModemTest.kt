@@ -3,6 +3,7 @@ package com.github.ericytsang.lib.modem
 import com.github.ericytsang.lib.net.connection.Connection
 import com.github.ericytsang.lib.net.host.TcpClient
 import com.github.ericytsang.lib.net.host.TcpServer
+import org.junit.After
 import org.junit.Test
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -35,7 +36,7 @@ class ModemTest
         tcpServer.close()
     }
 
-    @org.junit.After
+    @After
     fun teardown()
     {
         println("fun teardown() ===============================")
@@ -45,14 +46,14 @@ class ModemTest
         Thread.sleep(500)
     }
 
-    @org.junit.Test
+    @Test
     fun instantiateTest()
     {
         Modem(conn1)
         Modem(conn2)
     }
 
-    @org.junit.Test
+    @Test
     fun connectAcceptTest()
     {
         val m1 = Modem(conn1)
@@ -70,7 +71,7 @@ class ModemTest
         m2.close()
     }
 
-    @org.junit.Test
+    @Test
     fun concurrentConversationsTest1()
     {
         val m1 = Modem(conn1)
