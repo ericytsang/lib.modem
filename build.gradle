@@ -1,8 +1,8 @@
 group 'com.github.ericytsang'
-version '1.0.0'
+version '1.0.4'
 
 buildscript {
-    ext.kotlin_version = '1.0.5-2'
+    ext.kotlin_version = '1.0.6'
     repositories {
         mavenCentral()
     }
@@ -26,7 +26,7 @@ repositories {
 }
 
 dependencies {
-    compile "com.github.ericytsang:lib.regulatedstream:1.0.0"
+    compile "com.github.ericytsang:lib.regulatedstream:1.1.0"
     compile "com.github.ericytsang:lib.cipherstream:1.0.0"
     compile "com.github.ericytsang:lib.simplepipestream:1.0.1"
     compile "com.github.ericytsang:lib.net:1.0.0"
