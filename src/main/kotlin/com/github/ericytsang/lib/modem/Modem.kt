@@ -240,7 +240,6 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                             if (connectionsByLocalPort[localPort] === this@SimpleConnection)
                             {
                                 connectionsByLocalPort.remove(localPort)
-                                println("REMOVED")
                             }
                         }
                     }
@@ -256,7 +255,6 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                             if (connectionsByLocalPort[localPort] === this@SimpleConnection)
                             {
                                 connectionsByLocalPort.remove(localPort)
-                                println("REMOVED")
                             }
                         }
                     }
