@@ -8,160 +8,83 @@ import com.github.ericytsang.lib.net.host.Client
 import com.github.ericytsang.lib.net.host.Server
 import com.github.ericytsang.lib.simplepipestream.SimplePipedInputStream
 import com.github.ericytsang.lib.simplepipestream.SimplePipedOutputStream
-import java.io.EOFException
+import java.io.InputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+import java.io.OutputStream
 import java.io.Serializable
-import java.util.LinkedHashMap
+import java.net.ConnectException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.thread
 import kotlin.concurrent.withLock
 
 class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 {
-    //
-    // Server & Client
-    //
-
-    override fun accept():Connection = synchronized(inboundConnectionRequestsIs)
+    companion object
     {
-        val connectRequest = inboundConnectionRequestsIs.readObject() as Message.Connect
-        val connectionLocalPort = makeNewConnectionAndReturnPort()
-        val connection = connectionsByLocalPort[connectionLocalPort]!!
-        connection.remotePort = connectRequest.srcPort
-        send(Message.Accept(connectionLocalPort,connectRequest.srcPort))
-        send(Message.Ack(connection.remotePort,connection.inputStreamOutputStream.bufferSize))
+        const val RECV_WINDOW_SIZE_PER_CONNECTION = 4096
+    }
+
+    override fun connect(remoteAddress:Unit):Connection
+    {
+        val localPort = makeNewConnectionOnLocalPort()
+        val connection = connectionsByLocalPort[localPort]!!
+        sender.send(Message.Connect(localPort))
+        connection.connectLatch.await()
+        if (connection.state !is SimpleConnection.Connected) throw ConnectException()
         return connection
     }
 
-    override fun connect(remoteAddress:Unit):Connection = synchronized(outboundConnectionRequests)
+    override fun accept():Connection
     {
-        val connectionLocalPort = makeNewConnectionAndReturnPort()
-        val recipient = outboundConnectionRequests.expectMail(connectionLocalPort)
-        send(Message.Connect(connectionLocalPort))
-        recipient.awaitMail()
-        val connection = connectionsByLocalPort[connectionLocalPort]!!
-        send(Message.Ack(connection.remotePort,connection.inputStreamOutputStream.bufferSize))
+        val inboundConnect = inboundConnectsObjI.readObject() as Message.Connect
+        val localPort = makeNewConnectionOnLocalPort()
+        val connection = connectionsByLocalPort[localPort]!!
+        connection.receive(Message.Accept(inboundConnect.srcPort,localPort))
+        sender.send(Message.Accept(localPort,inboundConnect.srcPort))
         return connection
     }
 
     override fun close()
     {
-        // todo: communicate to remote modem that this modem is closing
-        multiplexedConnection.close()
-        accepter.join()
+        try
+        {
+            inboundConnectsObjO.close()
+            multiplexedConnection.close()
+        }
+        catch (ex:Exception)
+        {
+            // ignore
+        }
+        synchronized(connectionsByLocalPort)
+        {
+            connectionsByLocalPort.values.toList().forEach(SimpleConnection::close)
+            connectionsByLocalPort.clear()
+        }
+        if (Thread.currentThread() != reader)
+        {
+            reader.join()
+        }
     }
 
-    //
-    // private helper members
-    //
-
-    /**
-     * objects transmitted through the [multiplexedConnection].
-     */
-    private sealed class Message:Serializable
-    {
-        class Connect(val srcPort:Int):Message(),Serializable
-        class Accept(val srcPort:Int,val dstPort:Int):Message(),Serializable
-
-        /**
-         * promise remote party that local party will no longer send any
-         * [Message] objects to [dstPort] for this [Connection].
-         */
-        class Eof(val dstPort:Int):Message(),Serializable
-
-        /**
-         * request remote party to no longer send [Data] messages from [dstPort]
-         * for this [Connection].
-         */
-        class RequestEof(val dstPort:Int):Message(),Serializable
-        class Data(val dstPort:Int,val payload:ByteArray):Message(),Serializable
-        class Ack(val dstPort:Int,val bytesRead:Int):Message(),Serializable
-
-        /**
-         * used to acknowledge the remote party that the [Eof] message has been
-         * received.
-         */
-        class AckEof(val dstPort:Int):Message(),Serializable
-    }
-
-    /**
-     * contains inbound connection requests that have yet to be accepted.
-     */
-    private val inboundConnectionRequestsIs:ObjectInputStream
-    private val inboundConnectionRequestsOs:ObjectOutputStream
+    private val inboundConnectsObjO:ObjectOutputStream
+    private val inboundConnectsObjI:ObjectInputStream
 
     init
     {
-        val o = SimplePipedOutputStream()
-        val i = SimplePipedInputStream(o)
-        inboundConnectionRequestsOs = ObjectOutputStream(o)
-        inboundConnectionRequestsIs = ObjectInputStream(i)
+        val pipeO = SimplePipedOutputStream()
+        val pipeI = SimplePipedInputStream(pipeO)
+        inboundConnectsObjO = ObjectOutputStream(pipeO)
+        inboundConnectsObjI = ObjectInputStream(pipeI)
     }
 
-    /**
-     * keeps track of outbound connection requests that have yet to be accepted.
-     */
-    private val outboundConnectionRequests = Mailbox<Int,Unit>()
+    private val connectionsByLocalPort = linkedMapOf<Int,SimpleConnection>()
 
-    /**
-     * maps local ports to connection objects.
-     */
-    private val connectionsByLocalPort = LinkedHashMap<Int,SimpleConnection>()
-
-    private val accepter = thread()
+    private fun makeNewConnectionOnLocalPort():Int = synchronized(connectionsByLocalPort)
     {
-        val multiplexedIs = ObjectInputStream(multiplexedConnection.inputStream)
-        while (!Thread.interrupted())
-        {
-            val message:Message = try
-            {
-                multiplexedIs.readObject() as Message
-            }
-            catch (ex:EOFException)
-            {
-                connectionsByLocalPort.values.forEach {
-                    it.inputStreamOutputStream.flush()
-                    it.inputStreamOutputStream.close()
-                }
-                break
-            }
-            synchronized(connectionsByLocalPort)
-            {
-                when (message)
-                {
-                    is Message.Connect -> inboundConnectionRequestsOs.writeObject(message)
-                    is Message.Accept ->
-                    {
-                        connectionsByLocalPort[message.dstPort]!!.remotePort = message.srcPort
-                        outboundConnectionRequests.putMail(message.dstPort,Unit)
-                    }
-                    is Message.Eof ->
-                    {
-                        val connection = connectionsByLocalPort[message.dstPort]!!
-                        connection.inputStreamOutputStream.close()
-                        connection.remoteOutputStreamIsClosed = true
-                        connection.removeConnectionIfBothStreamsAreClosed()
-                        send(Message.AckEof(connection.remotePort))
-                    }
-                    is Message.AckEof ->
-                    {
-                        connectionsByLocalPort[message.dstPort]!!.localOutputStreamIsClosed = true
-                        connectionsByLocalPort[message.dstPort]!!.removeConnectionIfBothStreamsAreClosed()
-                    }
-                    is Message.RequestEof -> connectionsByLocalPort[message.dstPort]!!.outputStream.close()
-                    is Message.Data -> connectionsByLocalPort[message.dstPort]!!.inputStreamOutputStream.write(message.payload)
-                    is Message.Ack -> connectionsByLocalPort[message.dstPort]!!.outputStream.permit(message.bytesRead)
-                }.apply {}
-            }
-        }
-        inboundConnectionRequestsOs.close()
-        outboundConnectionRequests.close()
-    }
-
-    private fun send(message:Message)
-    {
-        sender.send(message)
+        val unusedPort = (Int.MIN_VALUE..Int.MAX_VALUE).find {it !in connectionsByLocalPort.keys} ?: throw RuntimeException("failed to allocate port for new connection")
+        connectionsByLocalPort[unusedPort] = SimpleConnection()
+        unusedPort
     }
 
     private val sender = object
@@ -178,114 +101,264 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             multiplexedOs.writeObject(message)
             multiplexedOs.flush()
         }
+
+        fun sendSilently(message:Message) = multiplexedConnectionAccess.withLock()
+        {
+            try
+            {
+                multiplexedOs.writeObject(message)
+                multiplexedOs.flush()
+            }
+            catch (ex:Exception)
+            {
+                // ignore
+            }
+        }
+    }
+
+    private val reader = object:Thread()
+    {
+        val objI by lazy {multiplexedConnection.inputStream.let(::ObjectInputStream)}
+
+        override tailrec fun run()
+        {
+            val message = try
+            {
+                objI.readObject() as Message
+            }
+            catch (ex:ClassCastException)
+            {
+                throw ex
+            }
+            catch (ex:Exception)
+            {
+                close()
+                return
+            }
+            synchronized(connectionsByLocalPort)
+            {
+                when (message)
+                {
+                    is Message.Connect -> inboundConnectsObjO.writeObject(message)
+                    is Message.Accept -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.Eof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.RequestEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.Data -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.Ack -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.AckEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                }.run {}
+            }
+            run()
+        }
+
+        init
+        {
+            start()
+        }
     }
 
     /**
-     * creates a new [SimpleConnection] object and puts it in a unused port in
-     * the [connectionsByLocalPort] map.
+     * objects transmitted through the [multiplexedConnection].
      */
-    private fun makeNewConnectionAndReturnPort():Int = synchronized(connectionsByLocalPort)
+    private sealed class Message:Serializable
     {
-        val unusedPort = (Int.MIN_VALUE..Int.MAX_VALUE).find {it !in connectionsByLocalPort.keys} ?: throw RuntimeException("failed to allocate port for new connection")
-        connectionsByLocalPort[unusedPort] = SimpleConnection(unusedPort)
-        unusedPort
+        class Connect(val srcPort:Int):Message()
+        class Accept(val srcPort:Int,val dstPort:Int):Message()
+
+        /**
+         * promise remote party that local party will no longer send any
+         * [Message] objects to [dstPort] for this [Connection].
+         */
+        class Eof(val dstPort:Int):Message(),Serializable
+
+        /**
+         * request remote party to no longer send [Data] messages from [dstPort]
+         * for this [Connection].
+         */
+        class RequestEof(val dstPort:Int):Message()
+        class AckEof(val dstPort:Int):Message()
+        class Data(val dstPort:Int,val payload:ByteArray):Message()
+        class Ack(val dstPort:Int,val bytesRead:Int):Message()
     }
 
-    private inner class SimpleConnection(val localPort:Int):Connection
+    private inner class SimpleConnection:Connection
     {
-        /**
-         * set once the connection has been accepted.
-         */
-        private var _remotePort:Int? = null
-        var remotePort:Int
-            set(value)
-            {
-                if (_remotePort != null) throw IllegalStateException("already set")
-                _remotePort = value
-            }
-            get() = _remotePort ?: throw IllegalStateException("not set yet")
+        val connectLatch = CountDownLatch(1)
+        override val inputStream:InputStream get() = state.inputStream
+        override val outputStream:OutputStream get() = state.outputStream
+        override fun close() = state.close()
+        var state:State = Connecting()
+            private set
+        fun receive(message:Message.Accept) = state.receive(message)
+        fun receive(message:Message.Data) = state.receive(message)
+        fun receive(message:Message.Ack) = state.receive(message)
+        fun receive(message:Message.RequestEof) = state.receive(message)
+        fun receive(message:Message.Eof) = state.receive(message)
+        fun receive(message:Message.AckEof) = state.receive(message)
 
-        /**
-         * bytes written to this stream can be read from [inputStream].
-         */
-        val inputStreamOutputStream = SimplePipedOutputStream()
-
-        var remoteOutputStreamIsClosed = false
-
-        /**
-         * stream that clients of the [Modem] object read from.
-         */
-        override val inputStream = object:AbstractInputStream()
+        inner abstract class State:Connection
         {
-            val stream = SimplePipedInputStream(inputStreamOutputStream)
-            private var closeCalled = false
-            override fun doClose() = synchronized(connectionsByLocalPort)
+            abstract fun receive(message:Message.Accept)
+            abstract fun receive(message:Message.Data)
+            abstract fun receive(message:Message.Ack)
+            abstract fun receive(message:Message.RequestEof)
+            abstract fun receive(message:Message.Eof)
+            abstract fun receive(message:Message.AckEof)
+        }
+
+        inner class Connecting:State()
+        {
+            override fun receive(message:Message.Accept)
             {
-                doNothing()
-                if (!closeCalled)
+                state = Connected(message.dstPort,message.srcPort)
+                connectLatch.countDown()
+            }
+            override fun receive(message:Message.Data) = throw UnsupportedOperationException()
+            override fun receive(message:Message.Ack) = throw UnsupportedOperationException()
+            override fun receive(message:Message.RequestEof) = throw UnsupportedOperationException()
+            override fun receive(message:Message.Eof) = throw UnsupportedOperationException()
+            override fun receive(message:Message.AckEof) = throw UnsupportedOperationException()
+            override val inputStream:InputStream get() = throw UnsupportedOperationException()
+            override val outputStream:OutputStream get() = throw UnsupportedOperationException()
+            override fun close()
+            {
+                state = Disconnected()
+                connectLatch.countDown()
+            }
+        }
+
+        inner class Connected(val localPort:Int,val remotePort:Int):State()
+        {
+            private var oClosed = false
+                set(value)
                 {
-                    closeCalled = true
-                    if (!remoteOutputStreamIsClosed)
+                    field = value
+                    if (iClosed && oClosed)
                     {
-                        send(Message.RequestEof(remotePort))
+                        synchronized(connectionsByLocalPort)
+                        {
+                            if (connectionsByLocalPort[localPort] === this@SimpleConnection)
+                            {
+                                connectionsByLocalPort.remove(localPort)
+                                println("REMOVED")
+                            }
+                        }
+                    }
+                }
+            private var iClosed = false
+                set(value)
+                {
+                    field = value
+                    if (iClosed && oClosed)
+                    {
+                        synchronized(connectionsByLocalPort)
+                        {
+                            if (connectionsByLocalPort[localPort] === this@SimpleConnection)
+                            {
+                                connectionsByLocalPort.remove(localPort)
+                                println("REMOVED")
+                            }
+                        }
+                    }
+                }
+            private val inputStreamOs = SimplePipedOutputStream(RECV_WINDOW_SIZE_PER_CONNECTION)
+            override val inputStream = object:AbstractInputStream()
+            {
+                private val pipeI = SimplePipedInputStream(inputStreamOs)
+                override fun doRead(b:ByteArray,off:Int,len:Int):Int
+                {
+                    val bytesRead = pipeI.read(b,off,len)
+                    synchronized(connectionsByLocalPort)
+                    {
+                        if (bytesRead > 0 && connectionsByLocalPort[localPort] === this@SimpleConnection)
+                        {
+                            sender.send(Message.Ack(remotePort,bytesRead))
+                        }
+                    }
+                    return bytesRead
+                }
+                override fun doClose()
+                {
+                    synchronized(connectionsByLocalPort)
+                    {
+                        if (connectionsByLocalPort[localPort] === this@SimpleConnection)
+                        {
+                            try
+                            {
+                                sender.send(Message.RequestEof(remotePort))
+                            }
+                            catch (ex:Exception)
+                            {
+                                receive(Message.Eof(localPort))
+                            }
+                        }
+                        doNothing()
                     }
                 }
             }
-            override fun doRead(b:ByteArray,off:Int,len:Int):Int
+            override val outputStream = RegulatedOutputStream(object:AbstractOutputStream()
             {
-                val read = stream.read(b,off,len)
+                override fun doClose()
+                {
+                    setClosed()
+                    try
+                    {
+                        sender.send(Message.Eof(remotePort))
+                    }
+                    catch (ex:Exception)
+                    {
+                        receive(Message.AckEof(localPort))
+                    }
+                }
+                override fun doWrite(b:ByteArray,off:Int,len:Int)
+                {
+                    sender.send(Message.Data(remotePort,b.sliceArray(off..off+len-1)))
+                }
+            })
+            init
+            {
+                outputStream.permit(RECV_WINDOW_SIZE_PER_CONNECTION)
+            }
+
+            override fun receive(message:Message.Accept) = throw UnsupportedOperationException()
+            override fun receive(message:Message.Data) = inputStreamOs.write(message.payload)
+            override fun receive(message:Message.Ack) = outputStream.permit(message.bytesRead)
+            override fun receive(message:Message.RequestEof)
+            {
+                outputStream.close()
+            }
+            override fun receive(message:Message.Eof)
+            {
                 synchronized(connectionsByLocalPort)
                 {
-                    if (!remoteOutputStreamIsClosed && read >= 0)
-                    {
-                        send(Message.Ack(remotePort,read))
-                    }
+                    inputStreamOs.close()
+                    sender.sendSilently(Message.AckEof(remotePort))
+                    iClosed = true
                 }
-                return read
+            }
+            override fun receive(message:Message.AckEof)
+            {
+                oClosed = true
+            }
+
+            override fun close()
+            {
+                inputStream.close()
+                outputStream.close()
             }
         }
 
-        var localOutputStreamIsClosed = false
-
-        /**
-         * stream that clients of the [Modem] object write to.
-         */
-        override val outputStream = object:AbstractOutputStream()
+        inner class Disconnected:State()
         {
-            private var closeCalled = false
-            override fun doClose() = synchronized(this)
-            {
-                setClosed()
-                if (!closeCalled)
-                {
-                    closeCalled = true
-                    send(Message.Eof(remotePort))
-                }
-            }
-            override fun doWrite(b:ByteArray,off:Int,len:Int)
-            {
-                send(Message.Data(remotePort,b.sliceArray(off..off+len-1)))
-            }
-        }.let(::RegulatedOutputStream)
-
-        fun removeConnectionIfBothStreamsAreClosed()
-        {
-            synchronized(connectionsByLocalPort)
-            {
-                if (remoteOutputStreamIsClosed && localOutputStreamIsClosed)
-                {
-                    if (connectionsByLocalPort[localPort] == this)
-                    {
-                        connectionsByLocalPort.remove(localPort)
-                    }
-                }
-            }
-        }
-
-        override fun close()
-        {
-            inputStream.close()
-            outputStream.close()
+            override val inputStream:InputStream get() = throw UnsupportedOperationException()
+            override val outputStream:OutputStream get() = throw UnsupportedOperationException()
+            override fun close() = throw UnsupportedOperationException()
+            override fun receive(message:Message.Accept) = throw UnsupportedOperationException()
+            override fun receive(message:Message.Data) = throw UnsupportedOperationException()
+            override fun receive(message:Message.Ack) = throw UnsupportedOperationException()
+            override fun receive(message:Message.RequestEof) = throw UnsupportedOperationException()
+            override fun receive(message:Message.Eof) = throw UnsupportedOperationException()
+            override fun receive(message:Message.AckEof) = throw UnsupportedOperationException()
         }
     }
 }
