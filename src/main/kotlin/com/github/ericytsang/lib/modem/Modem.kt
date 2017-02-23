@@ -63,11 +63,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         {
             // ignore
         }
-        synchronized(connectionsByLocalPort)
-        {
-            connectionsByLocalPort.values.toList().forEach(SimpleConnection::close)
-            connectionsByLocalPort.clear()
-        }
+        connectionsByLocalPort.values.toList().forEach(SimpleConnection::close)
         if (Thread.currentThread() != reader)
         {
             reader.join()
@@ -236,35 +232,32 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
         inner class Connected(val localPort:Int,val remotePort:Int):State()
         {
+            private val completeShutdownLatch = CountDownLatch(1)
+            private fun removeIfIsShutdownCompletely()
+            {
+                if (iClosed && oClosed)
+                {
+                    synchronized(connectionsByLocalPort)
+                    {
+                        if (connectionsByLocalPort[localPort] === this@SimpleConnection)
+                        {
+                            connectionsByLocalPort.remove(localPort)
+                        }
+                    }
+                    completeShutdownLatch.countDown()
+                }
+            }
             private var oClosed = false
                 set(value)
                 {
                     field = value
-                    if (iClosed && oClosed)
-                    {
-                        synchronized(connectionsByLocalPort)
-                        {
-                            if (connectionsByLocalPort[localPort] === this@SimpleConnection)
-                            {
-                                connectionsByLocalPort.remove(localPort)
-                            }
-                        }
-                    }
+                    removeIfIsShutdownCompletely()
                 }
             private var iClosed = false
                 set(value)
                 {
                     field = value
-                    if (iClosed && oClosed)
-                    {
-                        synchronized(connectionsByLocalPort)
-                        {
-                            if (connectionsByLocalPort[localPort] === this@SimpleConnection)
-                            {
-                                connectionsByLocalPort.remove(localPort)
-                            }
-                        }
-                    }
+                    removeIfIsShutdownCompletely()
                 }
             private val inputStreamOs = SimplePipedOutputStream(RECV_WINDOW_SIZE_PER_CONNECTION)
             override val inputStream = object:AbstractInputStream()
@@ -347,6 +340,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             {
                 inputStream.close()
                 outputStream.close()
+                completeShutdownLatch.await()
             }
         }
 
@@ -354,13 +348,13 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         {
             override val inputStream:InputStream get() = throw UnsupportedOperationException()
             override val outputStream:OutputStream get() = throw UnsupportedOperationException()
-            override fun close() = throw UnsupportedOperationException()
-            override fun receive(message:Message.Accept) = throw UnsupportedOperationException()
-            override fun receive(message:Message.Data) = throw UnsupportedOperationException()
-            override fun receive(message:Message.Ack) = throw UnsupportedOperationException()
-            override fun receive(message:Message.RequestEof) = throw UnsupportedOperationException()
-            override fun receive(message:Message.Eof) = throw UnsupportedOperationException()
-            override fun receive(message:Message.AckEof) = throw UnsupportedOperationException()
+            override fun close() = Unit
+            override fun receive(message:Message.Accept) = Unit
+            override fun receive(message:Message.Data) = Unit
+            override fun receive(message:Message.Ack) = Unit
+            override fun receive(message:Message.RequestEof) = Unit
+            override fun receive(message:Message.Eof) = Unit
+            override fun receive(message:Message.AckEof) = Unit
         }
     }
 }
