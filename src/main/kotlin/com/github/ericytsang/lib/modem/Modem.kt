@@ -56,9 +56,11 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         {
             // ignore
         }
-        val connections = connectionsByLocalPort.values.toList()
-        connections.forEach(SimpleConnection::close)
-        connectionsByLocalPort.values.removeAll(connections)
+        synchronized(connectionsByLocalPort)
+        {
+            connectionsByLocalPort.values.toList().forEach(SimpleConnection::close)
+            connectionsByLocalPort.clear()
+        }
         if (Thread.currentThread() != reader)
         {
             reader.join()
@@ -337,7 +339,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 oClosed = true
             }
 
-            override fun close()
+            override fun close() = synchronized(connectionsByLocalPort)
             {
                 inputStream.close()
                 outputStream.close()
