@@ -286,7 +286,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 {
                     synchronized(connectionsByLocalPort)
                     {
-                        if (connectionsByLocalPort[localPort] === this@SimpleConnection)
+                        if (connectionsByLocalPort[localPort] === this@SimpleConnection && !iClosed)
                         {
                             try
                             {
