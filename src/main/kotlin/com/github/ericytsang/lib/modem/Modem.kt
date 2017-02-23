@@ -268,7 +268,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                     val bytesRead = pipeI.read(b,off,len)
                     synchronized(connectionsByLocalPort)
                     {
-                        if (bytesRead > 0 && connectionsByLocalPort[localPort] === this@SimpleConnection)
+                        if (!iClosed)
                         {
                             sender.send(Message.Ack(remotePort,bytesRead))
                         }
@@ -279,7 +279,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 {
                     synchronized(connectionsByLocalPort)
                     {
-                        if (connectionsByLocalPort[localPort] === this@SimpleConnection && !iClosed)
+                        if (!iClosed)
                         {
                             try
                             {
