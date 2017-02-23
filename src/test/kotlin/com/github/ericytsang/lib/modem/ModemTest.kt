@@ -40,11 +40,11 @@ class ModemTest
     fun teardown()
     {
         println("fun teardown() ===============================")
-        Thread.sleep(500)
+        Thread.sleep(100)
         conn1.close()
         conn2.close()
         TestUtils.assertAllWorkerThreadsDead()
-        Thread.sleep(500)
+        Thread.sleep(100)
     }
 
     @Test

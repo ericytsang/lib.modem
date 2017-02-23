@@ -27,9 +27,13 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
     override fun connect(remoteAddress:Unit):Connection
     {
-        val localPort = makeNewConnectionOnLocalPort()
-        val connection = connectionsByLocalPort[localPort]!!
-        sender.send(Message.Connect(localPort))
+        val connection = synchronized(connectionsByLocalPort)
+        {
+            val localPort = makeNewConnectionOnLocalPort()
+            val connection = connectionsByLocalPort[localPort]!!
+            sender.send(Message.Connect(localPort))
+            connection
+        }
         connection.connectLatch.await()
         if (connection.state !is SimpleConnection.Connected) throw ConnectException()
         return connection
@@ -38,11 +42,14 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
     override fun accept():Connection
     {
         val inboundConnect = inboundConnectsObjI.readObject() as Message.Connect
-        val localPort = makeNewConnectionOnLocalPort()
-        val connection = connectionsByLocalPort[localPort]!!
-        connection.receive(Message.Accept(inboundConnect.srcPort,localPort))
-        sender.send(Message.Accept(localPort,inboundConnect.srcPort))
-        return connection
+        synchronized(connectionsByLocalPort)
+        {
+            val localPort = makeNewConnectionOnLocalPort()
+            val connection = connectionsByLocalPort[localPort]!!
+            connection.receive(Message.Accept(inboundConnect.srcPort,localPort))
+            sender.send(Message.Accept(localPort,inboundConnect.srcPort))
+            return connection
+        }
     }
 
     override fun close()
@@ -298,17 +305,14 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             {
                 override fun doClose()
                 {
-                    synchronized(connectionsByLocalPort)
+                    setClosed()
+                    try
                     {
-                        setClosed()
-                        try
-                        {
-                            sender.send(Message.Eof(remotePort))
-                        }
-                        catch (ex:Exception)
-                        {
-                            receive(Message.AckEof(localPort))
-                        }
+                        sender.send(Message.Eof(remotePort))
+                    }
+                    catch (ex:Exception)
+                    {
+                        receive(Message.AckEof(localPort))
                     }
                 }
                 override fun doWrite(b:ByteArray,off:Int,len:Int)
@@ -330,19 +334,16 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             override fun receive(message:Message.Eof)
             {
-                synchronized(connectionsByLocalPort)
-                {
-                    inputStreamOs.close()
-                    sender.sendSilently(Message.AckEof(remotePort))
-                    iClosed = true
-                }
+                inputStreamOs.close()
+                sender.sendSilently(Message.AckEof(remotePort))
+                iClosed = true
             }
             override fun receive(message:Message.AckEof)
             {
                 oClosed = true
             }
 
-            override fun close() = synchronized(connectionsByLocalPort)
+            override fun close()
             {
                 inputStream.close()
                 outputStream.close()
