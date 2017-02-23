@@ -298,14 +298,17 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             {
                 override fun doClose()
                 {
-                    setClosed()
-                    try
+                    synchronized(connectionsByLocalPort)
                     {
-                        sender.send(Message.Eof(remotePort))
-                    }
-                    catch (ex:Exception)
-                    {
-                        receive(Message.AckEof(localPort))
+                        setClosed()
+                        try
+                        {
+                            sender.send(Message.Eof(remotePort))
+                        }
+                        catch (ex:Exception)
+                        {
+                            receive(Message.AckEof(localPort))
+                        }
                     }
                 }
                 override fun doWrite(b:ByteArray,off:Int,len:Int)
