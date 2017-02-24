@@ -63,7 +63,9 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         {
             // ignore
         }
-        connectionsByLocalPort.values.toList().forEach(SimpleConnection::close)
+        synchronized(connectionsByLocalPort)
+        {connectionsByLocalPort.values.toList()}
+            .forEach(SimpleConnection::close)
         if (Thread.currentThread() != reader)
         {
             reader.join()
