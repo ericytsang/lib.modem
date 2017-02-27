@@ -11,9 +11,6 @@ import java.net.InetAddress
 import java.util.concurrent.LinkedBlockingQueue
 import kotlin.concurrent.thread
 
-/**
- * Created by surpl on 11/20/2016.
- */
 class ModemTest
 {
     companion object
@@ -129,11 +126,15 @@ class ModemTest
         try
         {
             m1.connect(Unit)
-            assert(false)
+            throw AssertionError()
+        }
+        catch (ex:AssertionError)
+        {
+            throw ex
         }
         catch (ex:Exception)
         {
-            ex.printStackTrace()
+            ex.printStackTrace(System.out)
         }
         m1.close()
         m2.close()
@@ -151,7 +152,7 @@ class ModemTest
         try
         {
             m1.accept()
-            assert(false)
+            throw AssertionError()
         }
         catch (ex:AssertionError)
         {
@@ -159,7 +160,7 @@ class ModemTest
         }
         catch (ex:Exception)
         {
-            // ignore
+            ex.printStackTrace(System.out)
         }
         m1.close()
         m2.close()
