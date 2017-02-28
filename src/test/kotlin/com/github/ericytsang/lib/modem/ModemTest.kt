@@ -40,7 +40,7 @@ class ModemTest
         Thread.sleep(100)
         conn1.close()
         conn2.close()
-        TestUtils.assertAllWorkerThreadsDead()
+        TestUtils.assertAllWorkerThreadsDead(emptySet(),100)
         Thread.sleep(100)
     }
 
