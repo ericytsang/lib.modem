@@ -36,7 +36,10 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             connection
         }
         connection.connectLatch.await()
-        if (connection.state !is SimpleConnection.Connected) throw ConnectException("modem has been closed by thread at following stacktrace:\n${closeStacktrace?.joinToString("\n")}")
+        if (connection.state !is SimpleConnection.Connected)
+        {
+            throwClosedExceptionIfClosedOrRethrow(ConnectException())
+        }
         return connection
     }
 
@@ -48,7 +51,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         }
         catch (ex:EOFException)
         {
-            throw IllegalStateException("modem has been closed by thread at following stacktrace:\n${closeStacktrace?.joinToString("\n")}")
+            throwClosedExceptionIfClosedOrRethrow(ex)
         }
         synchronized(connectionsByLocalPort)
         {
@@ -121,8 +124,15 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
         fun send(message:Message) = multiplexedConnectionAccess.withLock()
         {
-            multiplexedOs.writeObject(message)
-            multiplexedOs.flush()
+            try
+            {
+                multiplexedOs.writeObject(message)
+                multiplexedOs.flush()
+            }
+            catch (ex:Exception)
+            {
+                throwClosedExceptionIfClosedOrRethrow(ex)
+            }
         }
 
         fun sendSilently(message:Message) = multiplexedConnectionAccess.withLock()
@@ -178,6 +188,15 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         {
             start()
         }
+    }
+
+    private fun throwClosedExceptionIfClosedOrRethrow(cause:Throwable):Nothing
+    {
+        if (closeStacktrace != null)
+        {
+            throw IllegalStateException("modem has been closed by thread at following stacktrace:\n${closeStacktrace?.joinToString("\n")}",cause)
+        }
+        else throw cause
     }
 
     /**
