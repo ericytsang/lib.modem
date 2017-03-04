@@ -165,7 +165,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:Exception)
             {
-                close()
+                if (closeStacktrace == null) throw ex
                 return
             }
             synchronized(connectionsByLocalPort)
