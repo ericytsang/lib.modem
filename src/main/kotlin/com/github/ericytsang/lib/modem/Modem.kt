@@ -8,6 +8,7 @@ import com.github.ericytsang.lib.net.host.Client
 import com.github.ericytsang.lib.net.host.Server
 import com.github.ericytsang.lib.simplepipestream.SimplePipedInputStream
 import com.github.ericytsang.lib.simplepipestream.SimplePipedOutputStream
+import java.io.EOFException
 import java.io.InputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
@@ -35,13 +36,20 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             connection
         }
         connection.connectLatch.await()
-        if (connection.state !is SimpleConnection.Connected) throw ConnectException()
+        if (connection.state !is SimpleConnection.Connected) throw ConnectException("modem has been closed by thread at following stacktrace:\n${closeStacktrace?.joinToString("\n")}")
         return connection
     }
 
     override fun accept():Connection
     {
-        val inboundConnect = inboundConnectsObjI.readObject() as Message.Connect
+        val inboundConnect = try
+        {
+            inboundConnectsObjI.readObject() as Message.Connect
+        }
+        catch (ex:EOFException)
+        {
+            throw IllegalStateException("modem has been closed by thread at following stacktrace:\n${closeStacktrace?.joinToString("\n")}")
+        }
         synchronized(connectionsByLocalPort)
         {
             val localPort = makeNewConnectionOnLocalPort()
@@ -52,8 +60,18 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         }
     }
 
+    private val closeStacktraceMutex = ReentrantLock()
+    private var closeStacktrace:Array<StackTraceElement>? = null
+
     override fun close()
     {
+        closeStacktraceMutex.withLock()
+        {
+            if (closeStacktrace == null)
+            {
+                closeStacktrace = Thread.currentThread().stackTrace
+            }
+        }
         try
         {
             inboundConnectsObjO.close()
