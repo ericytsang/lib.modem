@@ -6,6 +6,7 @@ import com.github.ericytsang.lib.abstractstream.AbstractOutputStream
 import com.github.ericytsang.lib.net.connection.Connection
 import com.github.ericytsang.lib.net.host.Client
 import com.github.ericytsang.lib.net.host.Server
+import com.github.ericytsang.lib.onlysetonce.OnlySetOnce
 import com.github.ericytsang.lib.simplepipestream.SimplePipedInputStream
 import com.github.ericytsang.lib.simplepipestream.SimplePipedOutputStream
 import java.io.EOFException
@@ -25,6 +26,8 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
     {
         const val RECV_WINDOW_SIZE_PER_CONNECTION = 4096
     }
+
+    private val createStackTrace = Thread.currentThread().stackTrace
 
     override fun connect(remoteAddress:Unit):Connection
     {
@@ -63,17 +66,17 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         }
     }
 
-    private val closeStacktraceMutex = ReentrantLock()
-    private var closeStacktrace:Array<StackTraceElement>? = null
+    private var closeStacktrace:Array<StackTraceElement>? by OnlySetOnce()
 
     override fun close()
     {
-        closeStacktraceMutex.withLock()
+        try
         {
-            if (closeStacktrace == null)
-            {
-                closeStacktrace = Thread.currentThread().stackTrace
-            }
+            closeStacktrace = Thread.currentThread().stackTrace
+        }
+        catch (ex:Exception)
+        {
+            // ignore
         }
         try
         {
@@ -167,7 +170,8 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             {
                 if (closeStacktrace == null)
                 {
-                    throw ex
+                    close()
+                    throw IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}}has had its underlying stream closed.",ex)
                 }
                 else
                 {
@@ -201,7 +205,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
     {
         if (closeStacktrace != null)
         {
-            throw IllegalStateException("modem has been closed by thread at following stacktrace:\n${closeStacktrace?.joinToString("\n")}",cause)
+            throw IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}}has been closed by at the following stacktrace:\n${closeStacktrace!!.joinToString("\n","\nvvvv\n","\n^^^^\n")}",cause)
         }
         else throw cause
     }
