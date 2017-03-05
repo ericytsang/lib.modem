@@ -324,7 +324,14 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                     {
                         if (!iClosed)
                         {
-                            sender.send(Message.Ack(remotePort,bytesRead))
+                            try
+                            {
+                                sender.send(Message.Ack(remotePort,bytesRead))
+                            }
+                            catch (ex:Exception)
+                            {
+                                receive(Message.Eof(localPort))
+                            }
                         }
                     }
                     return bytesRead

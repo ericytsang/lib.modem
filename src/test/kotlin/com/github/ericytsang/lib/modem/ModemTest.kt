@@ -151,6 +151,7 @@ class ModemTest
             check(connection.inputStream.read() == -1)
         }
         m1.connect(Unit)
+        Thread.sleep(100)
         m1.close()
         t.get()
         m2.close()
