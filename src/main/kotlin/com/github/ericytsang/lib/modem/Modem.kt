@@ -171,7 +171,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 if (closeStacktrace == null)
                 {
                     close()
-                    throw IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}}has had its underlying stream closed.",ex)
+                    IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}}has had its underlying stream closed.",ex).printStackTrace(System.out)
                 }
                 else
                 {
