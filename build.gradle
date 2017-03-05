@@ -29,7 +29,7 @@ repositories {
 dependencies {
     compile "com.github.ericytsang:lib.regulatedstream:$stream_version"
     compile "com.github.ericytsang:lib.simplepipestream:$stream_version"
-    compile "com.github.ericytsang:lib.net:1.0.0"
+    compile "com.github.ericytsang:lib.net:2.0.0"
     compile "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     testCompile "com.github.ericytsang:lib.concurrent:4.0.0"
     testCompile "junit:junit:4.11"
