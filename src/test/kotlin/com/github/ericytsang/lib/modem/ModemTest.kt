@@ -1,5 +1,6 @@
 package com.github.ericytsang.lib.modem
 
+import com.github.ericytsang.lib.concurrent.future
 import com.github.ericytsang.lib.net.connection.Connection
 import com.github.ericytsang.lib.net.host.TcpClient
 import com.github.ericytsang.lib.net.host.TcpServer
@@ -137,6 +138,21 @@ class ModemTest
             ex.printStackTrace(System.out)
         }
         m1.close()
+        m2.close()
+    }
+
+    @Test
+    fun closingBreaksOngoingRead()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val t = future {
+            val connection = m2.accept()
+            check(connection.inputStream.read() == -1)
+        }
+        m1.connect(Unit)
+        m1.close()
+        t.get()
         m2.close()
     }
 
