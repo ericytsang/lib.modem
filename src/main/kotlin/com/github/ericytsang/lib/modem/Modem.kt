@@ -205,7 +205,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
     {
         if (closeStacktrace != null)
         {
-            throw IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}}has been closed by at the following stacktrace:\n${closeStacktrace!!.joinToString("\n","\nvvvv\n","\n^^^^\n")}",cause)
+            throw IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}has been closed by at the following stacktrace:\n${closeStacktrace!!.joinToString("\n","\nvvvv\n","\n^^^^\n")}",cause)
         }
         else throw cause
     }
