@@ -133,7 +133,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:Exception)
             {
-                throwClosedExceptionIfClosedOrRethrow(ex)
+                if (closeStacktrace != null) return@withLock else throw ex
             }
         }
 
