@@ -336,7 +336,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                     }
                     return bytesRead
                 }
-                override fun doClose()
+                override fun oneShotClose()
                 {
                     synchronized(connectionsByLocalPort)
                     {
@@ -351,15 +351,14 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                                 receive(Message.Eof(localPort))
                             }
                         }
-                        doNothing()
                     }
                 }
             }
             override val outputStream = RegulatedOutputStream(object:AbstractOutputStream()
             {
-                override fun doClose()
+                private val mutex = ReentrantLock()
+                override fun oneShotClose() = mutex.withLock()
                 {
-                    setClosed()
                     try
                     {
                         sender.send(Message.Eof(remotePort))
@@ -369,8 +368,9 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                         receive(Message.AckEof(localPort))
                     }
                 }
-                override fun doWrite(b:ByteArray,off:Int,len:Int)
+                override fun doWrite(b:ByteArray,off:Int,len:Int) = mutex.withLock()
                 {
+                    check(!isClosed)
                     sender.send(Message.Data(remotePort,b.sliceArray(off..off+len-1)))
                 }
             })
