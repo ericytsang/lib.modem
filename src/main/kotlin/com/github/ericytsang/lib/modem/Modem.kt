@@ -24,7 +24,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 {
     companion object
     {
-        const val RECV_WINDOW_SIZE_PER_CONNECTION = 4096
+        const val RECV_WINDOW_SIZE_PER_CONNECTION = 64*1024
     }
 
     private val createStackTrace = Thread.currentThread().stackTrace
@@ -39,9 +39,14 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             connection
         }
         connection.connectLatch.await()
-        if (connection.state !is SimpleConnection.Connected)
+        val connectionState = connection.state
+        if (connectionState !is SimpleConnection.Connected)
         {
             throwClosedExceptionIfClosedOrRethrow(ConnectException())
+        }
+        else
+        {
+            sender.send(Message.Ack(connectionState.remotePort,RECV_WINDOW_SIZE_PER_CONNECTION))
         }
         return connection
     }
@@ -62,6 +67,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             val connection = connectionsByLocalPort[localPort]!!
             connection.receive(Message.Accept(inboundConnect.srcPort,localPort))
             sender.send(Message.Accept(localPort,inboundConnect.srcPort))
+            sender.send(Message.Ack(inboundConnect.srcPort,RECV_WINDOW_SIZE_PER_CONNECTION))
             return connection
         }
     }
@@ -361,10 +367,6 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                     sender.send(Message.Data(remotePort,b.sliceArray(off..off+len-1)))
                 }
             })
-            init
-            {
-                outputStream.permit(RECV_WINDOW_SIZE_PER_CONNECTION)
-            }
 
             override fun receive(message:Message.Accept) = throw UnsupportedOperationException()
             override fun receive(message:Message.Data) = inputStreamOs.write(message.payload)
