@@ -130,7 +130,6 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             try
             {
                 multiplexedOs.writeObject(message)
-                multiplexedOs.flush()
             }
             catch (ex:Exception)
             {
@@ -143,7 +142,6 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             try
             {
                 multiplexedOs.writeObject(message)
-                multiplexedOs.flush()
             }
             catch (ex:Exception)
             {
