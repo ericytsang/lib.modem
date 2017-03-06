@@ -17,6 +17,8 @@ import java.io.OutputStream
 import java.io.Serializable
 import java.net.ConnectException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -397,7 +399,13 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             {
                 inputStream.close()
                 outputStream.close()
-                completeShutdownLatch.await()
+                if (!completeShutdownLatch.await(10,TimeUnit.SECONDS))
+                {
+                    throw TimeoutException("" +
+                        "failed to close de-multiplexed stream....reader " +
+                        "stacktrace:${reader.stackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}" +
+                        "oClosed: $oClosed; iClosed: $iClosed")
+                }
             }
         }
 
