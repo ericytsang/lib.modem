@@ -135,6 +135,10 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
         fun send(message:Message) = multiplexedConnectionAccess.withLock()
         {
+            if (closeStacktrace != null)
+            {
+                throwClosedExceptionIfClosedOrRethrow(IllegalStateException("already closed"))
+            }
             try
             {
                 multiplexedOs.writeObject(message)
