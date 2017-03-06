@@ -81,27 +81,25 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         try
         {
             closeStacktrace = Thread.currentThread().stackTrace
-        }
-        catch (ex:Exception)
-        {
-            // ignore
-        }
-        try
-        {
             inboundConnectsObjO.close()
             multiplexedConnection.close()
         }
-        catch (ex:Exception)
+        catch (ex:OnlySetOnce.Exception)
         {
-            // ignore
+            // ignore exception...we only want to close those streams once...
         }
-        synchronized(connectionsByLocalPort)
-        {connectionsByLocalPort.values.toList()}
-            .forEach(SimpleConnection::close)
+
+        // join with reader thread so it stops sending messages to
+        // de-multiplexed streams that will be removed
         if (Thread.currentThread() != reader)
         {
             reader.join()
         }
+
+        // close all existing de-multiplexed streams.
+        synchronized(connectionsByLocalPort)
+        {connectionsByLocalPort.values.toList()}
+            .forEach(SimpleConnection::close)
     }
 
     private val inboundConnectsObjO:ObjectOutputStream
