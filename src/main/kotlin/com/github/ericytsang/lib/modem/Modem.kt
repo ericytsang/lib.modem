@@ -324,23 +324,17 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 override fun doRead(b:ByteArray,off:Int,len:Int):Int
                 {
                     val bytesRead = pipeI.read(b,off,len)
-                    synchronized(connectionsByLocalPort)
+                    if (!iClosed && bytesRead > 0)
                     {
-                        if (!iClosed)
-                        {
-                            sender.sendSilently(Message.Ack(remotePort,bytesRead))
-                        }
+                        sender.sendSilently(Message.Ack(remotePort,bytesRead))
                     }
                     return bytesRead
                 }
                 override fun oneShotClose()
                 {
-                    synchronized(connectionsByLocalPort)
+                    if (!iClosed)
                     {
-                        if (!iClosed)
-                        {
-                            sender.sendSilently(Message.RequestEof(remotePort))
-                        }
+                        sender.sendSilently(Message.RequestEof(remotePort))
                     }
                 }
             }
