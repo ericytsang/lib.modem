@@ -189,16 +189,23 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             synchronized(connectionsByLocalPort)
             {
-                when (message)
+                try
                 {
-                    is Message.Connect -> inboundConnectsObjO.writeObject(message)
-                    is Message.Accept -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                    is Message.Eof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                    is Message.RequestEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                    is Message.Data -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                    is Message.Ack -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                    is Message.AckEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                }.run {}
+                    when (message)
+                    {
+                        is Message.Connect -> inboundConnectsObjO.writeObject(message)
+                        is Message.Accept -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                        is Message.Eof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                        is Message.RequestEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                        is Message.Data -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                        is Message.Ack -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                        is Message.AckEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    }.run {}
+                }
+                catch (ex:Exception)
+                {
+                    throwClosedExceptionIfClosedOrRethrow(ex)
+                }
             }
             run()
         }
