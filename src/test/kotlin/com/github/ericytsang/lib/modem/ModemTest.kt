@@ -142,6 +142,22 @@ class ModemTest
     }
 
     @Test
+    fun closingBreaksOngoingConnections()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val q = LinkedBlockingQueue<Connection>()
+        thread {(1..5).forEach {q.put(m2.accept())}}
+        (1..5).map {m1.connect(Unit)}
+        val conn2s = (1..5).map {q.take()}
+        // have 2 connections talk concurrently
+        val threads = conn2s.map {thread {it.inputStream.read()}}
+        m1.close()
+        threads.forEach {it.join()}
+        m2.close()
+    }
+
+    @Test
     fun closingBreaksOngoingRead()
     {
         val m1 = Modem(conn1)
