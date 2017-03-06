@@ -155,7 +155,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:Exception)
             {
-                // ignore
+                if (closeStacktrace == null) close()
             }
         }
     }
@@ -189,23 +189,16 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             synchronized(connectionsByLocalPort)
             {
-                try
+                when (message)
                 {
-                    when (message)
-                    {
-                        is Message.Connect -> inboundConnectsObjO.writeObject(message)
-                        is Message.Accept -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                        is Message.Eof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                        is Message.RequestEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                        is Message.Data -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                        is Message.Ack -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                        is Message.AckEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
-                    }.run {}
-                }
-                catch (ex:Exception)
-                {
-                    throwClosedExceptionIfClosedOrRethrow(ex)
-                }
+                    is Message.Connect -> inboundConnectsObjO.writeObject(message)
+                    is Message.Accept -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.Eof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.RequestEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.Data -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.Ack -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                    is Message.AckEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
+                }.run {}
             }
             run()
         }
@@ -335,14 +328,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                     {
                         if (!iClosed)
                         {
-                            try
-                            {
-                                sender.send(Message.Ack(remotePort,bytesRead))
-                            }
-                            catch (ex:Exception)
-                            {
-                                receive(Message.Eof(localPort))
-                            }
+                            sender.sendSilently(Message.Ack(remotePort,bytesRead))
                         }
                     }
                     return bytesRead
@@ -353,14 +339,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                     {
                         if (!iClosed)
                         {
-                            try
-                            {
-                                sender.send(Message.RequestEof(remotePort))
-                            }
-                            catch (ex:Exception)
-                            {
-                                receive(Message.Eof(localPort))
-                            }
+                            sender.sendSilently(Message.RequestEof(remotePort))
                         }
                     }
                 }
@@ -370,14 +349,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 private val mutex = ReentrantLock()
                 override fun oneShotClose() = mutex.withLock()
                 {
-                    try
-                    {
-                        sender.send(Message.Eof(remotePort))
-                    }
-                    catch (ex:Exception)
-                    {
-                        receive(Message.AckEof(localPort))
-                    }
+                    sender.sendSilently(Message.Eof(remotePort))
                 }
                 override fun doWrite(b:ByteArray,off:Int,len:Int) = mutex.withLock()
                 {
