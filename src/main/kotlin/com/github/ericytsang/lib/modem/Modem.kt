@@ -401,8 +401,16 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
             override fun close()
             {
-                inputStream.close()
-                outputStream.close()
+                if (closeStacktrace != null)
+                {
+                    receive(Message.Eof(0))
+                    receive(Message.AckEof(0))
+                }
+                else
+                {
+                    inputStream.close()
+                    outputStream.close()
+                }
                 if (!completeShutdownLatch.await(10,TimeUnit.SECONDS))
                 {
                     throw TimeoutException("" +
