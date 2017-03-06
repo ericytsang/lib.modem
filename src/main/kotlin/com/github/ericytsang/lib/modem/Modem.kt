@@ -155,7 +155,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:Exception)
             {
-                if (closeStacktrace == null) close()
+                multiplexedConnection.close()
             }
         }
     }
@@ -324,17 +324,23 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 override fun doRead(b:ByteArray,off:Int,len:Int):Int
                 {
                     val bytesRead = pipeI.read(b,off,len)
-                    if (!iClosed && bytesRead > 0)
+                    synchronized(connectionsByLocalPort)
                     {
-                        sender.sendSilently(Message.Ack(remotePort,bytesRead))
+                        if (!iClosed && bytesRead > 0)
+                        {
+                            sender.sendSilently(Message.Ack(remotePort,bytesRead))
+                        }
                     }
                     return bytesRead
                 }
                 override fun oneShotClose()
                 {
-                    if (!iClosed)
+                    synchronized(connectionsByLocalPort)
                     {
-                        sender.sendSilently(Message.RequestEof(remotePort))
+                        if (!iClosed)
+                        {
+                            sender.sendSilently(Message.RequestEof(remotePort))
+                        }
                     }
                 }
             }
