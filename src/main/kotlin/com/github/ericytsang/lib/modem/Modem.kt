@@ -164,6 +164,15 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             }
             catch (ex:Exception)
             {
+                try
+                {
+                    closeStacktrace = Thread.currentThread().stackTrace
+                }
+                catch (ex:OnlySetOnce.Exception)
+                {
+                    // ignore
+                }
+
                 RuntimeException("underlying stream closed for modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}",ex).printStackTrace(System.out)
                 inboundConnectQueueAccess.withLock()
                 {
