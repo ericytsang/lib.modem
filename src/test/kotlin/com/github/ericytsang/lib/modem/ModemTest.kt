@@ -184,6 +184,114 @@ class ModemTest
     }
 
     @Test
+    fun closeUnderlyingConnectionAbortsConnect1()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val thread = thread {
+            try
+            {
+                m2.connect(Unit)
+                throw AssertionError()
+            }
+            catch (ex:AssertionError)
+            {
+                throw ex
+            }
+            catch (ex:Exception)
+            {
+                ex.printStackTrace(System.out)
+            }
+        }
+        Thread.sleep(100)
+        check(thread.isAlive)
+        conn1.close()
+        thread.join()
+        m2.close()
+    }
+
+    @Test
+    fun closeUnderlyingConnectionAbortsConnect2()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val thread = thread {
+            try
+            {
+                m2.connect(Unit)
+                throw AssertionError()
+            }
+            catch (ex:AssertionError)
+            {
+                throw ex
+            }
+            catch (ex:Exception)
+            {
+                ex.printStackTrace(System.out)
+            }
+        }
+        Thread.sleep(100)
+        check(thread.isAlive)
+        conn2.close()
+        thread.join()
+        m2.close()
+    }
+
+    @Test
+    fun closeUnderlyingConnectionAbortsAccept1()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val thread = thread {
+            try
+            {
+                m2.accept()
+                throw AssertionError()
+            }
+            catch (ex:AssertionError)
+            {
+                throw ex
+            }
+            catch (ex:Exception)
+            {
+                ex.printStackTrace(System.out)
+            }
+        }
+        Thread.sleep(100)
+        check(thread.isAlive)
+        conn1.close()
+        thread.join()
+        m2.close()
+    }
+
+    @Test
+    fun closeUnderlyingConnectionAbortsAccept2()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val thread = thread {
+            try
+            {
+                m2.accept()
+                throw AssertionError()
+            }
+            catch (ex:AssertionError)
+            {
+                throw ex
+            }
+            catch (ex:Exception)
+            {
+                ex.printStackTrace(System.out)
+            }
+        }
+        Thread.sleep(100)
+        check(thread.isAlive)
+        conn2.close()
+        thread.join()
+        m2.close()
+    }
+
+    @Test
     fun closingBreaksOngoingRead()
     {
         val m1 = Modem(conn1)
@@ -195,6 +303,38 @@ class ModemTest
         m1.connect(Unit)
         Thread.sleep(100)
         m1.close()
+        t.get()
+        m2.close()
+    }
+
+    @Test
+    fun closingUnderlyingConnectionBreaksOngoingRead1()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val t = future {
+            val connection = m2.accept()
+            check(connection.inputStream.read() == -1)
+        }
+        m1.connect(Unit)
+        Thread.sleep(100)
+        conn1.close()
+        t.get()
+        m2.close()
+    }
+
+    @Test
+    fun closingUnderlyingConnectionBreaksOngoingRead2()
+    {
+        val m1 = Modem(conn1)
+        val m2 = Modem(conn2)
+        val t = future {
+            val connection = m2.accept()
+            check(connection.inputStream.read() == -1)
+        }
+        m1.connect(Unit)
+        Thread.sleep(100)
+        conn2.close()
         t.get()
         m2.close()
     }
