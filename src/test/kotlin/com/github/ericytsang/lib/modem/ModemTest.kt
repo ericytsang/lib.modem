@@ -158,6 +158,32 @@ class ModemTest
     }
 
     @Test
+    fun overflowConnectsGetRefused()
+    {
+        val m1 = Modem(conn1,3)
+        val m2 = Modem(conn2)
+        val threads = (1..3).map {thread {m2.connect(Unit)}}
+        Thread.sleep(100)
+        check(threads.all {it.isAlive})
+        try
+        {
+            m2.connect(Unit)
+            throw AssertionError()
+        }
+        catch (ex:AssertionError)
+        {
+            throw ex
+        }
+        catch (ex:Exception)
+        {
+            ex.printStackTrace(System.out)
+        }
+        m1.close()
+        threads.forEach {it.join()}
+        m2.close()
+    }
+
+    @Test
     fun closingBreaksOngoingRead()
     {
         val m1 = Modem(conn1)

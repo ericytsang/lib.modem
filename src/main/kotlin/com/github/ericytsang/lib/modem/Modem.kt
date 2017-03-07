@@ -9,7 +9,6 @@ import com.github.ericytsang.lib.net.host.Server
 import com.github.ericytsang.lib.onlysetonce.OnlySetOnce
 import com.github.ericytsang.lib.simplepipestream.SimplePipedInputStream
 import com.github.ericytsang.lib.simplepipestream.SimplePipedOutputStream
-import java.io.EOFException
 import java.io.InputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
@@ -17,16 +16,17 @@ import java.io.OutputStream
 import java.io.Serializable
 import java.net.ConnectException
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
+class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE):Client<Unit>,Server
 {
     companion object
     {
-        const val RECV_WINDOW_SIZE_PER_CONNECTION = 64*1024
+        const val RECV_WINDOW_SIZE_PER_CONNECTION = 8*1024
     }
 
     private val createStackTrace = Thread.currentThread().stackTrace
@@ -42,26 +42,29 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         }
         connection.connectLatch.await()
         val connectionState = connection.state
-        if (connectionState !is SimpleConnection.Connected)
-        {
-            throwClosedExceptionIfClosedOrRethrow(ConnectException())
-        }
-        else
-        {
-            sender.send(Message.Ack(connectionState.remotePort,RECV_WINDOW_SIZE_PER_CONNECTION))
-        }
+            as? SimpleConnection.Connected
+            ?: throwClosedExceptionIfClosedOrRethrow(ConnectException("connection refused"))
+        sender.send(Message.Ack(connectionState.remotePort,RECV_WINDOW_SIZE_PER_CONNECTION))
         return connection
     }
 
     override fun accept():Connection
     {
-        val inboundConnect = try
+        val inboundConnect = inboundConnectQueueAccess.withLock()
         {
-            inboundConnectsObjI.readObject() as Message.Connect
-        }
-        catch (ex:EOFException)
-        {
-            throwClosedExceptionIfClosedOrRethrow(ex)
+            while (inboundConnectQueue.isEmpty() && closeStacktrace == null)
+            {
+                inboundConnectQueuePutOrCloseEvent.await()
+
+            }
+            if (closeStacktrace == null)
+            {
+                inboundConnectQueue.take()
+            }
+            else
+            {
+                throwClosedExceptionIfClosedOrRethrow(RuntimeException())
+            }
         }
         synchronized(connectionsByLocalPort)
         {
@@ -76,26 +79,17 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
     private var closeStacktrace:Array<StackTraceElement>? by OnlySetOnce()
 
-    // todo: redesign so that close indirectly signals the reader thread to do all the closing work and shutting down all the demultiplexed connections
     override fun close()
     {
         try
         {
             closeStacktrace = Thread.currentThread().stackTrace
-            inboundConnectsObjO.close()
             multiplexedConnection.close()
-
-            // join with reader thread so it stops sending messages to
-            // de-multiplexed streams that will be removed
-            if (Thread.currentThread() != reader)
+            reader.join(10000)
+            if (reader.isAlive)
             {
-                reader.join()
+                throw RuntimeException("reader thread not dying...reader thread stachtrace:${reader.stackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}")
             }
-
-            // close all existing de-multiplexed streams.
-            synchronized(connectionsByLocalPort)
-            {connectionsByLocalPort.values.toList()}
-                .forEach(SimpleConnection::modemDeadClose)
         }
         catch (ex:OnlySetOnce.Exception)
         {
@@ -103,16 +97,9 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         }
     }
 
-    private val inboundConnectsObjO:ObjectOutputStream
-    private val inboundConnectsObjI:ObjectInputStream
-
-    init
-    {
-        val pipeO = SimplePipedOutputStream()
-        val pipeI = SimplePipedInputStream(pipeO)
-        inboundConnectsObjO = ObjectOutputStream(pipeO)
-        inboundConnectsObjI = ObjectInputStream(pipeI)
-    }
+    private val inboundConnectQueue = LinkedBlockingQueue<Message.Connect>(backlogSize)
+    private val inboundConnectQueueAccess = ReentrantLock()
+    private val inboundConnectQueuePutOrCloseEvent = inboundConnectQueueAccess.newCondition()
 
     private val connectionsByLocalPort = linkedMapOf<Int,SimpleConnection>()
 
@@ -144,7 +131,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:Exception)
             {
-                multiplexedConnection.close() // todo: wrap calls to read...for the reader thread...so if after we close, and read doesn't return shortly after, throw an exception or something
+                multiplexedConnection.close()
                 throwClosedExceptionIfClosedOrRethrow(ex)
             }
         }
@@ -178,14 +165,17 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:Exception)
             {
-                if (closeStacktrace == null)
+                RuntimeException("underlying stream closed for modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}",ex).printStackTrace(System.out)
+                inboundConnectQueueAccess.withLock()
                 {
-                    close()
-                    IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}has had its underlying stream closed.",ex).printStackTrace(System.out)
+                    inboundConnectQueuePutOrCloseEvent.signalAll()
                 }
-                else
+
+                // close all existing de-multiplexed streams.
+                synchronized(connectionsByLocalPort)
                 {
-                    close()
+                    connectionsByLocalPort.values.toList()
+                        .forEach(SimpleConnection::modemDeadClose)
                 }
                 return
             }
@@ -193,7 +183,21 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             {
                 when (message)
                 {
-                    is Message.Connect -> inboundConnectsObjO.writeObject(message)
+                    is Message.Connect ->
+                    {
+                        if (inboundConnectQueue.offer(message))
+                        {
+                            inboundConnectQueueAccess.withLock()
+                            {
+                                inboundConnectQueuePutOrCloseEvent.signal()
+                            }
+                        }
+                        else
+                        {
+                            sender.send(Message.RejectConnect(message.srcPort))
+                        }
+                    }
+                    is Message.RejectConnect -> connectionsByLocalPort[message.dstPort]!!.receive(message)
                     is Message.Accept -> connectionsByLocalPort[message.dstPort]!!.receive(message)
                     is Message.Eof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
                     is Message.RequestEof -> connectionsByLocalPort[message.dstPort]!!.receive(message)
@@ -225,6 +229,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
      */
     private sealed class Message:Serializable
     {
+        class RejectConnect(val dstPort:Int):Message()
         class Connect(val srcPort:Int):Message()
         class Accept(val srcPort:Int,val dstPort:Int):Message()
 
@@ -252,6 +257,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         override fun close() = state.close()
         var state:State = Connecting()
             private set
+        fun receive(message:Message.RejectConnect) = state.receive(message)
         fun receive(message:Message.Accept) = state.receive(message)
         fun receive(message:Message.Data) = state.receive(message)
         fun receive(message:Message.Ack) = state.receive(message)
@@ -262,6 +268,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
         inner abstract class State:Connection
         {
+            abstract fun receive(message:Message.RejectConnect)
             abstract fun receive(message:Message.Accept)
             abstract fun receive(message:Message.Data)
             abstract fun receive(message:Message.Ack)
@@ -276,6 +283,16 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             override fun receive(message:Message.Accept)
             {
                 state = Connected(message.dstPort,message.srcPort)
+                connectLatch.countDown()
+            }
+
+            override fun receive(message:Message.RejectConnect)
+            {
+                if (connectionsByLocalPort[message.dstPort] === this@SimpleConnection)
+                {
+                    connectionsByLocalPort.remove(message.dstPort)
+                }
+                state = Disconnected()
                 connectLatch.countDown()
             }
             override fun receive(message:Message.Data) = throw UnsupportedOperationException()
@@ -363,6 +380,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
                 }
             })
 
+            override fun receive(message:Message.RejectConnect) = throw UnsupportedOperationException()
             override fun receive(message:Message.Accept) = throw UnsupportedOperationException()
             override fun receive(message:Message.Data) = inputStreamOs.write(message.payload)
             override fun receive(message:Message.Ack) = outputStream.permit(message.bytesRead)
@@ -412,6 +430,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             override val inputStream:InputStream get() = throw UnsupportedOperationException()
             override val outputStream:OutputStream get() = throw UnsupportedOperationException()
             override fun close() = Unit
+            override fun receive(message:Message.RejectConnect) = Unit
             override fun receive(message:Message.Accept) = Unit
             override fun receive(message:Message.Data) = Unit
             override fun receive(message:Message.Ack) = Unit
