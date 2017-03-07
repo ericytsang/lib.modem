@@ -76,6 +76,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
     private var closeStacktrace:Array<StackTraceElement>? by OnlySetOnce()
 
+    // todo: redesign so that close indirectly signals the reader thread to do all the closing work and shutting down all the demultiplexed connections
     override fun close()
     {
         try
@@ -83,23 +84,23 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             closeStacktrace = Thread.currentThread().stackTrace
             inboundConnectsObjO.close()
             multiplexedConnection.close()
+
+            // join with reader thread so it stops sending messages to
+            // de-multiplexed streams that will be removed
+            if (Thread.currentThread() != reader)
+            {
+                reader.join()
+            }
+
+            // close all existing de-multiplexed streams.
+            synchronized(connectionsByLocalPort)
+            {connectionsByLocalPort.values.toList()}
+                .forEach(SimpleConnection::modemDeadClose)
         }
         catch (ex:OnlySetOnce.Exception)
         {
-            // ignore exception...we only want to close those streams once...
+            // ignore exception...we only want to do close stuff once...
         }
-
-        // join with reader thread so it stops sending messages to
-        // de-multiplexed streams that will be removed
-        if (Thread.currentThread() != reader)
-        {
-            reader.join()
-        }
-
-        // close all existing de-multiplexed streams.
-        synchronized(connectionsByLocalPort)
-        {connectionsByLocalPort.values.toList()}
-            .forEach(SimpleConnection::close)
     }
 
     private val inboundConnectsObjO:ObjectOutputStream
@@ -143,19 +144,20 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             }
             catch (ex:Exception)
             {
+                multiplexedConnection.close() // todo: wrap calls to read...for the reader thread...so if after we close, and read doesn't return shortly after, throw an exception or something
                 throwClosedExceptionIfClosedOrRethrow(ex)
             }
         }
 
-        fun sendSilently(message:Message) = multiplexedConnectionAccess.withLock()
+        fun sendSilently(message:Message)
         {
             try
             {
-                multiplexedOs.writeObject(message)
+                send(message)
             }
             catch (ex:Exception)
             {
-                multiplexedConnection.close()
+                // ignore
             }
         }
     }
@@ -256,6 +258,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
         fun receive(message:Message.RequestEof) = state.receive(message)
         fun receive(message:Message.Eof) = state.receive(message)
         fun receive(message:Message.AckEof) = state.receive(message)
+        fun modemDeadClose() = state.modemDeadClose()
 
         inner abstract class State:Connection
         {
@@ -265,6 +268,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             abstract fun receive(message:Message.RequestEof)
             abstract fun receive(message:Message.Eof)
             abstract fun receive(message:Message.AckEof)
+            abstract fun modemDeadClose()
         }
 
         inner class Connecting:State()
@@ -281,7 +285,8 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             override fun receive(message:Message.AckEof) = throw UnsupportedOperationException()
             override val inputStream:InputStream get() = throw UnsupportedOperationException()
             override val outputStream:OutputStream get() = throw UnsupportedOperationException()
-            override fun close()
+            override fun close() = throw UnsupportedOperationException()
+            override fun modemDeadClose()
             {
                 state = Disconnected()
                 connectLatch.countDown()
@@ -378,16 +383,20 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
 
             override fun close()
             {
-                if (closeStacktrace != null)
-                {
-                    receive(Message.Eof(0))
-                    receive(Message.AckEof(0))
-                }
-                else
-                {
-                    inputStream.close()
-                    outputStream.close()
-                }
+                inputStream.close()
+                outputStream.close()
+                awaitShutdown()
+            }
+
+            override fun modemDeadClose()
+            {
+                receive(Message.Eof(0))
+                receive(Message.AckEof(0))
+                awaitShutdown()
+            }
+
+            private fun awaitShutdown()
+            {
                 if (!completeShutdownLatch.await(10,TimeUnit.SECONDS))
                 {
                     throw TimeoutException("" +
@@ -409,6 +418,7 @@ class Modem(val multiplexedConnection:Connection):Client<Unit>,Server
             override fun receive(message:Message.RequestEof) = Unit
             override fun receive(message:Message.Eof) = Unit
             override fun receive(message:Message.AckEof) = Unit
+            override fun modemDeadClose() = Unit
         }
     }
 }
