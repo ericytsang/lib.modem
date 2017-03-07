@@ -55,7 +55,6 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             while (inboundConnectQueue.isEmpty() && closeStacktrace == null)
             {
                 inboundConnectQueuePutOrCloseEvent.await()
-
             }
             if (closeStacktrace == null)
             {
