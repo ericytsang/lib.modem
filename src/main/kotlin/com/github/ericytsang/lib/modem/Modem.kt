@@ -33,7 +33,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
 
     override fun connect(remoteAddress:Unit):Connection
     {
-        val connection = synchronized(connectionsByLocalPort)
+        val connection = connectionsByLocalPortMutex.withLock()
         {
             val localPort = makeNewConnectionOnLocalPort()
             val connection = connectionsByLocalPort[localPort]!!
@@ -65,7 +65,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                 throwClosedExceptionIfClosedOrRethrow(RuntimeException())
             }
         }
-        synchronized(connectionsByLocalPort)
+        connectionsByLocalPortMutex.withLock()
         {
             val localPort = makeNewConnectionOnLocalPort()
             val connection = connectionsByLocalPort[localPort]!!
@@ -100,9 +100,10 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
     private val inboundConnectQueueAccess = ReentrantLock()
     private val inboundConnectQueuePutOrCloseEvent = inboundConnectQueueAccess.newCondition()
 
+    private val connectionsByLocalPortMutex = ReentrantLock()
     private val connectionsByLocalPort = linkedMapOf<Int,SimpleConnection>()
 
-    private fun makeNewConnectionOnLocalPort():Int = synchronized(connectionsByLocalPort)
+    private fun makeNewConnectionOnLocalPort():Int = connectionsByLocalPortMutex.withLock()
     {
         val unusedPort = (Int.MIN_VALUE..Int.MAX_VALUE).find {it !in connectionsByLocalPort.keys} ?: throw RuntimeException("failed to allocate port for new connection")
         connectionsByLocalPort[unusedPort] = SimpleConnection()
@@ -180,14 +181,14 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                 }
 
                 // close all existing de-multiplexed streams.
-                synchronized(connectionsByLocalPort)
+                connectionsByLocalPortMutex.withLock()
                 {
                     connectionsByLocalPort.values.toList()
                         .forEach(SimpleConnection::modemDeadClose)
                 }
                 return
             }
-            synchronized(connectionsByLocalPort)
+            connectionsByLocalPortMutex.withLock()
             {
                 when (message)
                 {
@@ -325,7 +326,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             {
                 if (iClosed && oClosed)
                 {
-                    synchronized(connectionsByLocalPort)
+                    connectionsByLocalPortMutex.withLock()
                     {
                         if (connectionsByLocalPort[localPort] === this@SimpleConnection)
                         {
@@ -354,7 +355,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                 override fun doRead(b:ByteArray,off:Int,len:Int):Int
                 {
                     val bytesRead = pipeI.read(b,off,len)
-                    synchronized(connectionsByLocalPort)
+                    connectionsByLocalPortMutex.withLock()
                     {
                         if (!iClosed && bytesRead > 0)
                         {
@@ -365,7 +366,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                 }
                 override fun oneShotClose()
                 {
-                    synchronized(connectionsByLocalPort)
+                    connectionsByLocalPortMutex.withLock()
                     {
                         if (!iClosed)
                         {
@@ -427,7 +428,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                 {
                     throw TimeoutException("" +
                         "failed to close de-multiplexed stream....reader " +
-                        "stacktrace:${reader.stackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}" +
+                        "reader stacktrace:${reader.stackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}" +
                         "oClosed: $oClosed; iClosed: $iClosed")
                 }
             }
