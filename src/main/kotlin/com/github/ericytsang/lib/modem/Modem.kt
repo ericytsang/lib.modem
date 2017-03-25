@@ -87,7 +87,11 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             reader.join(10000)
             if (reader.isAlive)
             {
-                throw RuntimeException("reader thread not dying...reader thread stachtrace:${reader.stackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}")
+                throw RuntimeException("reader thread not dying...reader thread stacktrace:${reader.stackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}")
+            }
+            if (sender.isAlive)
+            {
+                throw RuntimeException("sender thread not dying...sender thread stacktrace:${sender.stackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}")
             }
         }
         catch (ex:OnlySetOnce.Exception)
@@ -110,30 +114,22 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
         unusedPort
     }
 
-    private val sender = object
+    private val sender = object:Thread()
     {
         /**
          * monitor that must be held before writing to [multiplexedOs].
          */
-        private val multiplexedConnectionAccess = ReentrantLock()
+        private val messages = LinkedBlockingQueue<Message>()
 
         private val multiplexedOs = ObjectOutputStream(multiplexedConnection.outputStream)
 
-        fun send(message:Message) = multiplexedConnectionAccess.withLock()
+        fun send(message:Message)
         {
             if (closeStacktrace != null)
             {
                 throwClosedExceptionIfClosedOrRethrow(IllegalStateException("already closed"))
             }
-            try
-            {
-                multiplexedOs.writeObject(message)
-            }
-            catch (ex:Exception)
-            {
-                multiplexedConnection.close()
-                throwClosedExceptionIfClosedOrRethrow(ex)
-            }
+            messages.put(message)
         }
 
         fun sendSilently(message:Message)
@@ -146,6 +142,33 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             {
                 // ignore
             }
+        }
+
+        override tailrec fun run()
+        {
+            val message = try
+            {
+                messages.take()
+            }
+            catch (ex:InterruptedException)
+            {
+                return
+            }
+            try
+            {
+                multiplexedOs.writeObject(message)
+            }
+            catch (ex:Exception)
+            {
+                multiplexedConnection.close()
+                RuntimeException("underlying stream closed for modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}",ex).printStackTrace(System.out)
+            }
+            run()
+        }
+
+        init
+        {
+            start()
         }
     }
 
@@ -179,6 +202,10 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                 {
                     inboundConnectQueuePutOrCloseEvent.signalAll()
                 }
+
+                // close the sender
+                sender.interrupt()
+                sender.join()
 
                 // close all existing de-multiplexed streams.
                 connectionsByLocalPortMutex.withLock()
