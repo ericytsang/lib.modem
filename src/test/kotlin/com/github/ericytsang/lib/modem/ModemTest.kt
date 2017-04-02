@@ -81,10 +81,10 @@ class ModemTest
         val conn2s = (1..5).map {q.take()}
         // have 2 connections talk concurrently
         val threads = listOf(
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[0].outputStream.let(::DataOutputStream).writeInt(it)}},
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[1].outputStream.let(::DataOutputStream).writeInt(it)}},
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[0].inputStream.let(::DataInputStream).readInt() == it)}},
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[1].inputStream.let(::DataInputStream).readInt() == it)}})
+            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println(it);conn1s[0].outputStream.let(::DataOutputStream).writeInt(it)}},
+            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println(it);conn1s[1].outputStream.let(::DataOutputStream).writeInt(it)}},
+            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println(it);assert(conn2s[0].inputStream.let(::DataInputStream).readInt() == it)}},
+            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println(it);assert(conn2s[1].inputStream.let(::DataInputStream).readInt() == it)}})
         threads.forEach {it.join()}
         m1.close()
         m2.close()
@@ -101,12 +101,12 @@ class ModemTest
         val conn2s = (1..5).map {q.take()}
         // have 1 connection send a lot, but corresponding one not receive
         val hangingThreads = listOf(
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[0].outputStream.let(::DataOutputStream).writeInt(it)}},
-            thread {(Byte.MIN_VALUE..0).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[0].inputStream.let(::DataInputStream).readInt() == it)}})
+            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println(it);conn1s[0].outputStream.let(::DataOutputStream).writeInt(it)}},
+            thread {(Byte.MIN_VALUE..0).forEach {if (it%10 == 0) println(it);assert(conn2s[0].inputStream.let(::DataInputStream).readInt() == it)}})
         // have another connection send and receive as normal while the first one is blocked
         val joinableThreads = listOf(
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[1].outputStream.let(::DataOutputStream).writeInt(it)}},
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[1].inputStream.let(::DataInputStream).readInt() == it)}})
+            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println(it);conn1s[1].outputStream.let(::DataOutputStream).writeInt(it)}},
+            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println(it);assert(conn2s[1].inputStream.let(::DataInputStream).readInt() == it)}})
         joinableThreads.forEach {it.join()}
         Thread.sleep(250)
         hangingThreads.all {it.isAlive}
