@@ -169,11 +169,10 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             {
                 val message = try
                 {
-                    val message:Message
-                    while (true)
+                    messagesMutex.withLock()
                     {
-                        messagesMutex.lock()
-                        try
+                        val message:Message
+                        while (true)
                         {
                             while (messages.isEmpty()) newMessage.await()
                             val msgQ = messages.take()
@@ -187,12 +186,8 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                             messages.put(msgQ)
                             break
                         }
-                        finally
-                        {
-                            messagesMutex.unlock()
-                        }
+                        message
                     }
-                    message
                 }
                 catch (ex:InterruptedException)
                 {
@@ -495,7 +490,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
 
             private fun awaitShutdown()
             {
-                if (!completeShutdownLatch.await(120,TimeUnit.SECONDS))
+                if (!completeShutdownLatch.await(10,TimeUnit.SECONDS))
                 {
                     throw TimeoutException("" +
                         "failed to close de-multiplexed stream....reader " +
