@@ -15,6 +15,9 @@ import java.io.ObjectOutputStream
 import java.io.OutputStream
 import java.io.Serializable
 import java.net.ConnectException
+import java.util.Collections
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.BlockingQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -27,6 +30,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
     companion object
     {
         const val RECV_WINDOW_SIZE_PER_CONNECTION = 8*1024
+        const val ROUND_ROBIN_Q_CAPACITY = 1*1024
     }
 
     private val createStackTrace = Thread.currentThread().stackTrace
@@ -37,14 +41,14 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
         {
             val localPort = makeNewConnectionOnLocalPort()
             val connection = connectionsByLocalPort[localPort]!!
-            sender.send(Message.Connect(localPort))
+            sender.send(localPort,Message.Connect(localPort))
             connection
         }
         connection.connectLatch.await()
         val connectionState = connection.state
             as? SimpleConnection.Connected
             ?: throwClosedExceptionIfClosedOrRethrow(ConnectException("connection refused"))
-        sender.send(Message.Ack(connectionState.remotePort,RECV_WINDOW_SIZE_PER_CONNECTION))
+        sender.send(connectionState.localPort,Message.Ack(connectionState.remotePort,RECV_WINDOW_SIZE_PER_CONNECTION))
         return connection
     }
 
@@ -70,8 +74,8 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             val localPort = makeNewConnectionOnLocalPort()
             val connection = connectionsByLocalPort[localPort]!!
             connection.receive(Message.Accept(inboundConnect.srcPort,localPort))
-            sender.send(Message.Accept(localPort,inboundConnect.srcPort))
-            sender.send(Message.Ack(inboundConnect.srcPort,RECV_WINDOW_SIZE_PER_CONNECTION))
+            sender.send(localPort,Message.Accept(localPort,inboundConnect.srcPort))
+            sender.send(localPort,Message.Ack(inboundConnect.srcPort,RECV_WINDOW_SIZE_PER_CONNECTION))
             return connection
         }
     }
@@ -119,24 +123,39 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
         /**
          * monitor that must be held before writing to [multiplexedOs].
          */
-        private val messages = LinkedBlockingQueue<Message>()
+        private val messages = LinkedBlockingQueue<BlockingQueue<Message>>()
+
+        private val messageQsByPort = Collections.synchronizedMap(mutableMapOf<Int,BlockingQueue<Message>>())
 
         private val multiplexedOs = ObjectOutputStream(multiplexedConnection.outputStream)
 
-        fun send(message:Message)
+        private val messagesMutex = ReentrantLock()
+
+        private val newMessage = messagesMutex.newCondition()
+
+        fun send(srcPort:Int,message:Message)
         {
             if (closeStacktrace != null)
             {
                 throwClosedExceptionIfClosedOrRethrow(IllegalStateException("already closed"))
             }
-            messages.put(message)
+            val msgQ = messageQsByPort[srcPort] ?: ArrayBlockingQueue<Message>(ROUND_ROBIN_Q_CAPACITY).apply {messageQsByPort[srcPort] = this}
+            msgQ.put(message)
+            messagesMutex.withLock()
+            {
+                if (msgQ !in messages)
+                {
+                    messages.put(msgQ)
+                }
+                newMessage.signal()
+            }
         }
 
-        fun sendSilently(message:Message)
+        fun sendSilently(srcPort:Int,message:Message)
         {
             try
             {
-                send(message)
+                send(srcPort,message)
             }
             catch (ex:Exception)
             {
@@ -144,26 +163,46 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             }
         }
 
-        override tailrec fun run()
+        override fun run()
         {
-            val message = try
+            while (true)
             {
-                messages.take()
+                val message = try
+                {
+                    messagesMutex.withLock()
+                    {
+                        val message:Message
+                        while (true)
+                        {
+                            while (messages.isEmpty()) newMessage.await()
+                            val msgQ = messages.take()
+                            val pollResult = msgQ.poll()
+                            if (pollResult == null)
+                            {
+                                messageQsByPort.values.remove(msgQ)
+                                continue
+                            }
+                            message = pollResult
+                            messages.put(msgQ)
+                            break
+                        }
+                        message
+                    }
+                }
+                catch (ex:InterruptedException)
+                {
+                    return
+                }
+                try
+                {
+                    multiplexedOs.writeObject(message)
+                }
+                catch (ex:Exception)
+                {
+                    multiplexedConnection.close()
+                    RuntimeException("underlying stream closed for modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}",ex).printStackTrace(System.out)
+                }
             }
-            catch (ex:InterruptedException)
-            {
-                return
-            }
-            try
-            {
-                multiplexedOs.writeObject(message)
-            }
-            catch (ex:Exception)
-            {
-                multiplexedConnection.close()
-                RuntimeException("underlying stream closed for modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}",ex).printStackTrace(System.out)
-            }
-            run()
         }
 
         init
@@ -230,7 +269,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                         }
                         else
                         {
-                            sender.send(Message.RejectConnect(message.srcPort))
+                            sender.send(Int.MAX_VALUE,Message.RejectConnect(message.srcPort))
                         }
                     }
                     is Message.RejectConnect -> connectionsByLocalPort[message.dstPort]!!.receive(message)
@@ -386,7 +425,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                     {
                         if (!iClosed && bytesRead > 0)
                         {
-                            sender.sendSilently(Message.Ack(remotePort,bytesRead))
+                            sender.sendSilently(localPort,Message.Ack(remotePort,bytesRead))
                         }
                     }
                     return bytesRead
@@ -397,7 +436,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                     {
                         if (!iClosed)
                         {
-                            sender.sendSilently(Message.RequestEof(remotePort))
+                            sender.sendSilently(localPort,Message.RequestEof(remotePort))
                         }
                     }
                 }
@@ -407,12 +446,12 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
                 private val mutex = ReentrantLock()
                 override fun oneShotClose() = mutex.withLock()
                 {
-                    sender.sendSilently(Message.Eof(remotePort))
+                    sender.sendSilently(localPort,Message.Eof(remotePort))
                 }
                 override fun doWrite(b:ByteArray,off:Int,len:Int) = mutex.withLock()
                 {
                     check(!isClosed)
-                    sender.send(Message.Data(remotePort,b.sliceArray(off..off+len-1)))
+                    sender.send(localPort,Message.Data(remotePort,b.sliceArray(off..off+len-1)))
                 }
             })
 
@@ -427,7 +466,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             override fun receive(message:Message.Eof)
             {
                 inputStreamOs.close()
-                sender.sendSilently(Message.AckEof(remotePort))
+                sender.sendSilently(localPort,Message.AckEof(remotePort))
                 iClosed = true
             }
             override fun receive(message:Message.AckEof)
