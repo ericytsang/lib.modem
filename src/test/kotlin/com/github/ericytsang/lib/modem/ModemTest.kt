@@ -81,10 +81,10 @@ class ModemTest
         val conn2s = (1..5).map {q.take()}
         // have 2 connections talk concurrently
         val threads = listOf(
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[0].outputStream.let(::DataOutputStream).writeInt(it)}},
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[1].outputStream.let(::DataOutputStream).writeInt(it)}},
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[0].inputStream.let(::DataInputStream).readInt() == it)}},
-            thread {(Byte.MIN_VALUE..Byte.MAX_VALUE).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[1].inputStream.let(::DataInputStream).readInt() == it)}})
+            thread {(Short.MIN_VALUE..Short.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[0].outputStream.let(::DataOutputStream).writeInt(it)}},
+            thread {(Short.MIN_VALUE..Short.MAX_VALUE).forEach {if (it%10 == 0) println("write: $it");conn1s[1].outputStream.let(::DataOutputStream).writeInt(it)}},
+            thread {(Short.MIN_VALUE..Short.MAX_VALUE).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[0].inputStream.let(::DataInputStream).readInt() == it)}},
+            thread {(Short.MIN_VALUE..Short.MAX_VALUE).forEach {if (it%10 == 0) println("read:  $it");assert(conn2s[1].inputStream.let(::DataInputStream).readInt() == it)}})
         threads.forEach {it.join()}
         m1.close()
         m2.close()
