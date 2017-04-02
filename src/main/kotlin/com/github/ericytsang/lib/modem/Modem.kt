@@ -451,7 +451,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
 
             private fun awaitShutdown()
             {
-                if (!completeShutdownLatch.await(10,TimeUnit.SECONDS))
+                if (!completeShutdownLatch.await(120,TimeUnit.SECONDS))
                 {
                     throw TimeoutException("" +
                         "failed to close de-multiplexed stream....reader " +
