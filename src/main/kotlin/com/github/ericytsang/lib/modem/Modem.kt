@@ -10,10 +10,7 @@ import com.github.ericytsang.lib.onlysetonce.OnlySetOnce
 import com.github.ericytsang.lib.simplepipestream.SimplePipedInputStream
 import com.github.ericytsang.lib.simplepipestream.SimplePipedOutputStream
 import java.io.InputStream
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
 import java.io.OutputStream
-import java.io.Serializable
 import java.net.ConnectException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
@@ -121,7 +118,7 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
          */
         private val messages = LinkedBlockingQueue<Message>()
 
-        private val multiplexedOs = ObjectOutputStream(multiplexedConnection.outputStream)
+        private val multiplexedOs = multiplexedConnection.outputStream.buffered()
 
         fun send(message:Message)
         {
@@ -156,7 +153,8 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             }
             try
             {
-                multiplexedOs.writeObject(message)
+                message.serialize(multiplexedOs)
+                if (messages.isEmpty()) multiplexedOs.flush()
             }
             catch (ex:Exception)
             {
@@ -174,15 +172,15 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
 
     private val reader = object:Thread()
     {
-        val objI by lazy {multiplexedConnection.inputStream.let(::ObjectInputStream)}
+        val dataI by lazy {multiplexedConnection.inputStream.buffered()}
 
         override tailrec fun run()
         {
             val message = try
             {
-                objI.readObject() as Message
+                Message.parse(dataI)
             }
-            catch (ex:ClassCastException)
+            catch (ex:ArrayIndexOutOfBoundsException)
             {
                 throw ex
             }
@@ -258,31 +256,6 @@ class Modem(val multiplexedConnection:Connection,backlogSize:Int = Int.MAX_VALUE
             throw IllegalStateException("modem created at:${createStackTrace.joinToString("\n","\nvvvv\n","\n^^^^\n")}has been closed at the following stacktrace:\n${closeStacktrace!!.joinToString("\n","\nvvvv\n","\n^^^^\n")}",cause)
         }
         else throw cause
-    }
-
-    /**
-     * objects transmitted through the [multiplexedConnection].
-     */
-    private sealed class Message:Serializable
-    {
-        class RejectConnect(val dstPort:Int):Message()
-        class Connect(val srcPort:Int):Message()
-        class Accept(val srcPort:Int,val dstPort:Int):Message()
-
-        /**
-         * promise remote party that local party will no longer send any
-         * [Message] objects to [dstPort] for this [Connection].
-         */
-        class Eof(val dstPort:Int):Message(),Serializable
-
-        /**
-         * request remote party to no longer send [Data] messages from [dstPort]
-         * for this [Connection].
-         */
-        class RequestEof(val dstPort:Int):Message()
-        class AckEof(val dstPort:Int):Message()
-        class Data(val dstPort:Int,val payload:ByteArray):Message()
-        class Ack(val dstPort:Int,val bytesRead:Int):Message()
     }
 
     private inner class SimpleConnection:Connection
